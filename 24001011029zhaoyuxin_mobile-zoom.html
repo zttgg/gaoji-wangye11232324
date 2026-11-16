@@ -75,6 +75,14 @@
     .zyx1029_help { font-size: 12.5px; color: var(--zyx1029_muted); margin-top: 12px; line-height: 1.9; }
     .zyx1029_help b { color: var(--zyx1029_accent); }
 
+    /* 实机演示视频区块：竖向录屏限高居中，圆角与卡片风格保持一致 */
+    .zyx1029_demo { margin-top: 18px; padding: 14px; background: #fff;
+      border: 1px solid rgba(99,102,241,.14); border-radius: 16px; box-shadow: 0 8px 24px rgba(30,41,59,.05); }
+    .zyx1029_demo h2 { font-size: 14px; color: var(--zyx1029_accent); margin-bottom: 10px; }
+    .zyx1029_demo video { display: block; height: min(460px, 62vh); max-width: 100%; margin: 0 auto;
+      border-radius: 12px; background: #000; }
+    .zyx1029_demo p { font-size: 12.5px; color: var(--zyx1029_muted); margin-top: 8px; text-align: center; }
+
     .zyx1029_footer { text-align: center; margin-top: 24px; font-size: 12.5px; color: var(--zyx1029_muted); }
     .zyx1029_footer a { color: var(--zyx1029_accent); font-weight: 700; }
 
@@ -116,6 +124,22 @@
       <b>双击</b> 在 1× / 2× 之间切换（缩回 1× 自动居中）<br>
       <b>放大后单指</b> 拖动查看细节（1× 时拖不出边界，越界有阻尼回弹）
     </p>
+
+    <!--
+      实机演示视频区块
+      作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+      功能：内嵌手机实拍录屏，演示双指缩放、双击放大、放大后拖动；
+      视频与封面放在 zyx1029_shots/ 下，playsinline + webkit-playsinline 保证 iOS 上不强制全屏。
+    -->
+    <section class="zyx1029_demo">
+      <h2>实机演示 · 手机录屏</h2>
+      <video id="zyx1029Demo" controls playsinline webkit-playsinline preload="metadata"
+        poster="zyx1029_shots/mobile-zoom-demo-poster.jpg">
+        <source src="zyx1029_shots/mobile-zoom-demo.mp4" type="video/mp4">
+        你的浏览器不支持 video 标签，可 <a href="zyx1029_shots/mobile-zoom-demo.mp4">直接下载观看</a>。
+      </video>
+      <p>iPhone 实拍：双指缩放 1×~4×、双击在 1×/2× 间切换、放大后单指拖动看细节</p>
+    </section>
 
     <div class="zyx1029_toast" id="zyx1029Toast"></div>
 
