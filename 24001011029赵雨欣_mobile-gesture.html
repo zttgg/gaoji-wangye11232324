@@ -1,0 +1,326 @@
+<!--
+  作者：赵雨欣
+  学号：24001011029
+  建立时间：2026-11-16 13:55:00
+  使用模型：DeepSeek-V4.1-Flash
+  功能名称及简介：任务二·手势卡片 —— 4 道中华美食卡片，左右滑动切换上一道/下一道。
+    核心：touchstart 记起点 → touchmove 实时跟手 → touchend 判定翻页；
+    用 changedTouches[0] 计算横向位移，阈值 40px 防误触，甩动速度 >0.45px/ms 也可翻页，
+    300ms 冷却防快速连滑跳两张，卡片容器 touch-action: pan-y 保证纵向仍可滚动，
+    切换带 0.3s 过渡动画，边界阻尼回弹并提示"已经是第一张/最后一张"。命名前缀统一 zyx1029_。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>手势卡片 · 中华美食 | 赵雨欣 24001011029</title>
+  <style>
+    :root {
+      --zyx1029_ink: #1e293b;
+      --zyx1029_muted: #64748b;
+      --zyx1029_paper: #f6f7fb;
+      --zyx1029_accent: #6366f1;
+      --zyx1029_accent2: #a855f7;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { -webkit-tap-highlight-color: transparent; }
+    body {
+      color: var(--zyx1029_ink);
+      background: var(--zyx1029_paper);
+      font-family: "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif;
+      line-height: 1.7;
+      -webkit-text-size-adjust: 100%;
+      min-height: 100vh;
+    }
+    a { color: inherit; text-decoration: none; }
+
+    .zyx1029_shell { width: min(420px, 100% - 28px); margin: 0 auto; padding-bottom: 40px; }
+
+    /* 返回首页条 */
+    .zyx1029_topbar {
+      position: sticky; top: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 0; background: rgba(246,247,251,.86);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(99,102,241,.12); font-size: 14px;
+    }
+    .zyx1029_sig {
+      font-weight: 700; letter-spacing: .06em;
+      background: linear-gradient(135deg, var(--zyx1029_accent), var(--zyx1029_accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .zyx1029_home {
+      padding: 7px 16px; border-radius: 999px; color: #fff; font-weight: 700;
+      background: linear-gradient(135deg, var(--zyx1029_accent), var(--zyx1029_accent2));
+      box-shadow: 0 6px 16px rgba(99,102,241,.3); transition: transform .2s ease;
+    }
+    .zyx1029_home:active { transform: scale(.94); }
+
+    .zyx1029_intro { text-align: center; margin: 18px 0 14px; }
+    .zyx1029_intro h1 { font-size: 22px; }
+    .zyx1029_intro p { font-size: 13px; color: var(--zyx1029_muted); margin-top: 4px; }
+
+    /* 卡片视口：overflow 隐藏 + 接管横向手势，纵向交给浏览器滚动 */
+    .zyx1029_view {
+      overflow: hidden; border-radius: 20px;
+      touch-action: pan-y; user-select: none; -webkit-touch-callout: none;
+      box-shadow: 0 16px 40px rgba(30,41,59,.18);
+    }
+    /* 轨道：4 张卡片横向排列，translateX 切换，0.3s 过渡 */
+    .zyx1029_track { display: flex; transition: transform .3s ease; will-change: transform; }
+    .zyx1029_card {
+      flex: 0 0 100%; min-height: 360px; color: #fff;
+      display: flex; flex-direction: column; justify-content: flex-end;
+      padding: 26px; position: relative;
+    }
+    .zyx1029_emoji { position: absolute; top: 26px; right: 24px; font-size: 72px; opacity: .9; }
+    /* 真实菜品照片铺满卡片 */
+    .zyx1029_dish-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+    /* 渐变遮罩：底部压暗，保证白色文字清晰 */
+    .zyx1029_shade { position: absolute; inset: 0; z-index: 1;
+      background: linear-gradient(180deg, rgba(0,0,0,.10) 0%, rgba(0,0,0,.45) 55%, rgba(0,0,0,.82) 100%); }
+    /* 文字浮于图片与遮罩之上 */
+    .zyx1029_card h2, .zyx1029_card p, .zyx1029_card .zyx1029_dish-tag { position: relative; z-index: 2; }
+    .zyx1029_dish-name { font-size: 30px; font-weight: 800; letter-spacing: .04em; }
+    .zyx1029_dish-en { font-size: 13px; opacity: .8; margin: 2px 0 12px; letter-spacing: .1em; }
+    .zyx1029_dish-desc { font-size: 15px; line-height: 1.8; opacity: .96; }
+    .zyx1029_dish-tag {
+      display: inline-block; margin-top: 16px; align-self: flex-start;
+      font-size: 12.5px; font-weight: 700; padding: 5px 12px; border-radius: 999px;
+      background: rgba(255,255,255,.22); border: 1px solid rgba(255,255,255,.35);
+    }
+
+    /* 底部指示 */
+    .zyx1029_bar { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; }
+    .zyx1029_counter { font-size: 14px; font-weight: 700; color: var(--zyx1029_accent); }
+    .zyx1029_dots { display: flex; gap: 8px; }
+    .zyx1029_dot { width: 9px; height: 9px; border-radius: 50%; background: #cbd5e1; transition: all .3s ease; }
+    .zyx1029_dot.on { background: linear-gradient(135deg, var(--zyx1029_accent), var(--zyx1029_accent2)); width: 22px; border-radius: 6px; }
+
+    .zyx1029_hint { text-align: center; font-size: 12.5px; color: var(--zyx1029_muted); margin-top: 12px; }
+
+    /* 边界提示气泡 */
+    .zyx1029_toast {
+      position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%) translateY(20px);
+      background: rgba(30,41,59,.92); color: #fff; font-size: 14px; font-weight: 700;
+      padding: 10px 20px; border-radius: 999px; opacity: 0; pointer-events: none;
+      transition: opacity .25s ease, transform .25s ease; z-index: 50;
+    }
+    .zyx1029_toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    .zyx1029_footer { text-align: center; margin-top: 26px; font-size: 12.5px; color: var(--zyx1029_muted); }
+    .zyx1029_footer a { color: var(--zyx1029_accent); font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="zyx1029_shell">
+
+    <!-- 返回首页链接（项目规则 3） -->
+    <header class="zyx1029_topbar">
+      <span class="zyx1029_sig">赵雨欣 · 24001011029</span>
+      <a class="zyx1029_home" href="index.html">← 返回首页</a>
+    </header>
+
+    <div class="zyx1029_intro">
+      <h1>中华美食手势卡片</h1>
+      <p>左右滑动切换 · 共 4 道菜</p>
+    </div>
+
+    <!-- 卡片视口 -->
+    <div class="zyx1029_view" id="zyx1029View">
+      <div class="zyx1029_track" id="zyx1029Track">
+        <article class="zyx1029_card" style="background:linear-gradient(150deg,#b91c1c,#7c2d12)">
+          <img class="zyx1029_dish-img" alt="北京烤鸭" loading="lazy" src="https://commons.wikimedia.org/wiki/Special:FilePath/Sliced%20Peking%20Duck.jpg?width=900" onerror="this.onerror=null;this.src='https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=crispy%20roasted%20peking%20duck%20sliced%20glossy%20red%20skin%20served%20on%20white%20plate%20professional%20food%20photography&image_size=portrait_4_3'">
+          <div class="zyx1029_shade"></div>
+          <h2 class="zyx1029_dish-name">北京烤鸭</h2>
+          <p class="zyx1029_dish-en">PEKING DUCK</p>
+          <p class="zyx1029_dish-desc">果木明火烤制，皮酥肉嫩、油而不腻。片下枣红色的脆皮，蘸甜面酱、配葱丝，用薄饼一卷，是京城最讲究的一口香。</p>
+          <span class="zyx1029_dish-tag">京菜 · 宫廷风味</span>
+        </article>
+        <article class="zyx1029_card" style="background:linear-gradient(150deg,#ea580c,#9a3412)">
+          <img class="zyx1029_dish-img" alt="麻婆豆腐" loading="lazy" src="https://commons.wikimedia.org/wiki/Special:FilePath/Mapo%20Tofu%20with%20rice.jpg?width=900" onerror="this.onerror=null;this.src='https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=mapo%20tofu%20sichuan%20spicy%20numbing%20bean%20curd%20in%20red%20chili%20oil%20bowl%20professional%20food%20photography&image_size=portrait_4_3'">
+          <div class="zyx1029_shade"></div>
+          <h2 class="zyx1029_dish-name">麻婆豆腐</h2>
+          <p class="zyx1029_dish-en">MAPO TOFU</p>
+          <p class="zyx1029_dish-desc">麻、辣、烫、香、酥、嫩、鲜、活八字箴言。嫩豆腐裹着红油与花椒面，牛肉末酥香，一勺下肚，川味的热烈直冲天灵盖。</p>
+          <span class="zyx1029_dish-tag">川菜 · 麻辣鲜香</span>
+        </article>
+        <article class="zyx1029_card" style="background:linear-gradient(150deg,#0d9488,#134e4a)">
+          <img class="zyx1029_dish-img" alt="水晶虾饺" loading="lazy" src="https://commons.wikimedia.org/wiki/Special:FilePath/03%20Har%20Gau%20Shrimp%20Dumplings%20-%20East%20Harbor%20Seafood%20Palace.jpg?width=900" onerror="this.onerror=null;this.src='https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=crystal%20shrimp%20dumpling%20cantonese%20dim%20sum%20translucent%20wrapper%20in%20bamboo%20steamer%20professional%20food%20photography&image_size=portrait_4_3'">
+          <div class="zyx1029_shade"></div>
+          <h2 class="zyx1029_dish-name">水晶虾饺</h2>
+          <p class="zyx1029_dish-en">SHRIMP DUMPLING</p>
+          <p class="zyx1029_dish-desc">广式早茶"四大天王"之首。澄面皮薄如蝉翼、晶莹剔透，裹整只鲜虾与笋粒，咬开满口汤汁，讲究一个"鲜"字。</p>
+          <span class="zyx1029_dish-tag">粤菜 · 早茶点心</span>
+        </article>
+        <article class="zyx1029_card" style="background:linear-gradient(150deg,#ca8a04,#713f12)">
+          <img class="zyx1029_dish-img" alt="肉夹馍" loading="lazy" src="https://commons.wikimedia.org/wiki/Special:FilePath/Roujiamo%20and%20Laoling%20Laodoufu.jpg?width=900" onerror="this.onerror=null;this.src='https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=rou%20jia%20mo%20chinese%20hamburger%20chopped%20braised%20pork%20in%20crispy%20flatbread%20professional%20food%20photography&image_size=portrait_4_3'">
+          <div class="zyx1029_shade"></div>
+          <h2 class="zyx1029_dish-name">肉夹馍</h2>
+          <p class="zyx1029_dish-en">ROU JIA MO</p>
+          <p class="zyx1029_dish-desc">西安千年名吃。腊汁肉肥而不腻、瘦而不柴，剁碎夹进现打的热馍，外酥里软，肉香四溢，被称作"中式汉堡"。</p>
+          <span class="zyx1029_dish-tag">陕菜 · 三秦名吃</span>
+        </article>
+      </div>
+    </div>
+
+    <!-- 底部指示 -->
+    <div class="zyx1029_bar">
+      <span class="zyx1029_counter" id="zyx1029Counter">第 1/4 张</span>
+      <div class="zyx1029_dots" id="zyx1029Dots">
+        <span class="zyx1029_dot on"></span>
+        <span class="zyx1029_dot"></span>
+        <span class="zyx1029_dot"></span>
+        <span class="zyx1029_dot"></span>
+      </div>
+    </div>
+    <p class="zyx1029_hint">← 右滑看上一道 · 左滑看下一道 →（跟手拖动 / 快速甩动都能翻页，上下仍可滚动页面）</p>
+
+    <div class="zyx1029_toast" id="zyx1029Toast"></div>
+
+    <footer class="zyx1029_footer">
+      赵雨欣 24001011029 · 高级网页设计 · <a href="index.html">回到首页 →</a>
+    </footer>
+  </div>
+
+  <script>
+    /*
+      任务二实现要点：
+      - 三段式手势：touchstart 记起点 → touchmove 实时跟手 → touchend 判定翻页。
+      - 抬手用 changedTouches[0]：touchend 时 touches 里已经移除了这根手指。
+      - 阈值 40px：位移太小视为点击/误触，不切换（验收①）。
+      - 速度判定：位移不算大但甩得够快（|v|>0.45px/ms 且 |dx|>18）也翻页，还原"轻扫"手感。
+      - 轴锁定：横向位移大于纵向才接管，纵向手势继续交给浏览器滚动。
+      - 300ms 冷却：一次切换后短暂忽略，防止快速连滑跳两张（验收②）。
+      - 卡片容器 touch-action: pan-y：只接管横向手势（验收③）。
+      - 边界阻尼：第一张再右滑 / 最后一张再左滑时位移只跟 35%，松手回弹并给出提示。
+      命名前缀统一 zyx1029_（项目规则 1）。
+    */
+
+    // 功能名称及简介：zyx1029_initGesture —— 初始化手势卡片：跟手拖动、甩动翻页、边界回弹
+    // 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+    function zyx1029_initGesture() {
+      var view = document.getElementById('zyx1029View');
+      var track = document.getElementById('zyx1029Track');
+      var counter = document.getElementById('zyx1029Counter');
+      var dots = document.getElementById('zyx1029Dots').children;
+      var total = 4;              // 卡片总数
+      var index = 0;              // 当前显示第几张（0 基）
+      var threshold = 40;         // 横向位移阈值，小于此值且速度不够判为误触
+      var flickSpeed = 0.45;      // 甩动速度阈值（px/ms）
+      var coolMs = 300;           // 切换冷却时间，防连滑跳两张
+      var cooling = false;        // 冷却中标志
+      var startX = 0, startY = 0, lastX = 0, lastT = 0;
+      var velocity = 0;           // 最近一次 move 的横向速度 px/ms
+      var axis = '';              // 轴锁定：'' 未定 | 'x' 横滑 | 'y' 纵向滚动
+      var dragging = false;       // 是否已进入横向跟手状态
+
+      // 把轨道平移到当前卡片，并更新计数与圆点
+      function render() {
+        track.style.transform = 'translateX(' + (-index * 100) + '%)';
+        counter.textContent = '第 ' + (index + 1) + '/' + total + ' 张';
+        for (var i = 0; i < dots.length; i++) {
+          dots[i].className = 'zyx1029_dot' + (i === index ? ' on' : '');
+        }
+      }
+
+      // 触发一次切换并进入冷却
+      function go(next) {
+        index = next;
+        render();
+        cooling = true;
+        setTimeout(function () { cooling = false; }, coolMs);
+      }
+
+      // 显示边界提示气泡
+      function toast(msg) {
+        var el = document.getElementById('zyx1029Toast');
+        el.textContent = msg;
+        el.classList.add('show');
+        clearTimeout(el._zyx1029_t);
+        el._zyx1029_t = setTimeout(function () { el.classList.remove('show'); }, 1200);
+      }
+
+      // 边界阻尼：第一张再往右、最后一张再往左时，位移只跟随 35%
+      function resist(dx) {
+        if ((index === 0 && dx > 0) || (index === total - 1 && dx < 0)) return dx * 0.35;
+        return dx;
+      }
+
+      // 按下：记起点与时间，关闭过渡让卡片直接跟手
+      view.addEventListener('touchstart', function (e) {
+        if (e.touches.length !== 1) return;
+        var t = e.touches[0];
+        startX = lastX = t.clientX;
+        startY = t.clientY;
+        lastT = Date.now();
+        velocity = 0;
+        axis = '';
+        dragging = false;
+        track.style.transition = 'none';
+      }, { passive: true });
+
+      // 移动：先判主轴方向，横向才实时平移轨道；同时记录速度用于甩动判定
+      view.addEventListener('touchmove', function (e) {
+        if (e.touches.length !== 1) return;
+        var t = e.touches[0];
+        var dx = t.clientX - startX;
+        var dy = t.clientY - startY;
+
+        if (!axis && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+          axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';   // 轴锁定
+        }
+        if (axis !== 'x') return;                            // 纵向手势不拦截，交给页面滚动
+
+        dragging = true;
+        var now = Date.now(), dt = now - lastT;
+        if (dt > 0) velocity = (t.clientX - lastX) / dt;
+        lastX = t.clientX;
+        lastT = now;
+
+        var offset = resist(dx);
+        track.style.transform = 'translateX(calc(' + (-index * 100) + '% + ' + offset + 'px))';
+      }, { passive: true });
+
+      // 抬起：恢复过渡，按"位移够远"或"甩得够快"决定翻页，否则回弹
+      view.addEventListener('touchend', function (e) {
+        var t = e.changedTouches[0];          // 抬手时 touches 里已无该手指
+        var dx = t.clientX - startX;
+        var dy = t.clientY - startY;
+        track.style.transition = 'transform .3s ease';
+
+        if (dragging && axis === 'x' && !cooling) {
+          var far = Math.abs(dx) >= threshold && Math.abs(dx) > Math.abs(dy);
+          var fast = Math.abs(velocity) > flickSpeed && Math.abs(dx) > 18;
+          if (far || fast) {
+            if (dx < 0) {
+              if (index < total - 1) { go(index + 1); return; }   // 左滑 → 下一道
+              toast('已经是最后一张');
+            } else {
+              if (index > 0) { go(index - 1); return; }           // 右滑 → 上一道
+              toast('已经是第一张');
+            }
+          }
+        }
+
+        dragging = false;
+        render();                              // 未翻页/冷却中 → 平滑回弹到当前卡片
+      });
+
+      // 被来电、通知横幅打断：立刻复位，避免卡片停在半路
+      view.addEventListener('touchcancel', function () {
+        dragging = false;
+        track.style.transition = 'transform .3s ease';
+        render();
+      });
+
+      render(); // 初始定位到第 1 张
+    }
+
+    // 功能名称及简介：页面加载后初始化手势卡片
+    // 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+    document.addEventListener('DOMContentLoaded', zyx1029_initGesture);
+  </script>
+</body>
+</html>

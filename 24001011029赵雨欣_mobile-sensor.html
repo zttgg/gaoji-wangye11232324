@@ -1,0 +1,283 @@
+<!--
+  作者：赵雨欣
+  学号：24001011029
+  建立时间：2026-11-16 14:20:00
+  使用模型：Qwen3.8-Flash
+  功能名称及简介：任务四·摇一摇彩蛋 —— 监听 devicemotion，用 accelerationIncludingGravity 合成加速度，
+    超过阈值(约18)判定为"摇动"并随机抽出一道今日菜谱，触发后进入 1.5s 冷却（验收①一次摇动只触发一次）。
+    无加速度传感器的设备显示"当前设备不支持"并提供"点我抽一次"按钮降级（验收②不报错不白屏）；
+    iOS 通过按钮触发 DeviceMotionEvent.requestPermission() 申请权限（验收③）；
+    页面附 accelerationIncludingGravity 与 acceleration 的区别说明（验收④）。命名前缀统一 zyx1029_。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>摇一摇彩蛋 · 今日菜谱 | 赵雨欣 24001011029</title>
+  <style>
+    :root {
+      --zyx1029_ink: #1e293b; --zyx1029_muted: #64748b; --zyx1029_paper: #f6f7fb;
+      --zyx1029_accent: #6366f1; --zyx1029_accent2: #a855f7; --zyx1029_pink: #ec4899;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { -webkit-tap-highlight-color: transparent; }
+    body {
+      color: var(--zyx1029_ink); background: var(--zyx1029_paper);
+      font-family: "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif;
+      line-height: 1.7; -webkit-text-size-adjust: 100%; min-height: 100vh;
+    }
+    a { color: inherit; text-decoration: none; }
+    .zyx1029_shell { width: min(440px, 100% - 24px); margin: 0 auto; padding-bottom: 40px; }
+
+    .zyx1029_topbar {
+      position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 0; background: rgba(246,247,251,.86);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(99,102,241,.12); font-size: 14px;
+    }
+    .zyx1029_sig { font-weight: 700; letter-spacing: .06em;
+      background: linear-gradient(135deg, var(--zyx1029_accent), var(--zyx1029_accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .zyx1029_home { padding: 7px 16px; border-radius: 999px; color: #fff; font-weight: 700;
+      background: linear-gradient(135deg, var(--zyx1029_accent), var(--zyx1029_accent2));
+      box-shadow: 0 6px 16px rgba(99,102,241,.3); transition: transform .2s ease; }
+    .zyx1029_home:active { transform: scale(.94); }
+
+    .zyx1029_hero { text-align: center; margin: 22px 0 8px; }
+    .zyx1029_hero h1 { font-size: 24px; }
+    .zyx1029_hero p { font-size: 14px; color: var(--zyx1029_muted); margin-top: 6px; }
+
+    /* 摇动提示图标 */
+    .zyx1029_phone { font-size: 64px; margin: 18px auto 6px; width: fit-content; }
+    .zyx1029_phone.zyx1029_shaking { animation: zyx1029_wob .4s ease; }
+    @keyframes zyx1029_wob {
+      0%,100% { transform: rotate(0); }
+      20% { transform: rotate(-16deg); } 40% { transform: rotate(14deg); }
+      60% { transform: rotate(-10deg); } 80% { transform: rotate(8deg); }
+    }
+
+    /* 结果卡片 */
+    .zyx1029_result {
+      margin: 18px auto; width: min(320px, 92%); min-height: 150px; border-radius: 20px;
+      background: #fff; border: 1px solid rgba(99,102,241,.14);
+      box-shadow: 0 12px 30px rgba(30,41,59,.1); display: grid; place-items: center;
+      padding: 20px; text-align: center; color: var(--zyx1029_muted); font-size: 15px;
+    }
+    .zyx1029_dish { display: none; }
+    .zyx1029_dish.show { display: block; animation: zyx1029_pop .45s cubic-bezier(.2,1.4,.4,1); }
+    @keyframes zyx1029_pop { 0% { transform: scale(.4); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+    .zyx1029_dish .zyx1029_dishmedia { display: grid; place-items: center; }
+    .zyx1029_dish .zyx1029_dishimg { width: 120px; height: 120px; object-fit: cover; border-radius: 16px; box-shadow: 0 6px 16px rgba(30,41,59,.18); }
+    .zyx1029_dish .zyx1029_emoji { font-size: 56px; }
+    .zyx1029_dish .zyx1029_name { font-size: 26px; font-weight: 800; margin-top: 6px; color: var(--zyx1029_ink); }
+    .zyx1029_dish .zyx1029_en { font-size: 12px; letter-spacing: .12em; color: var(--zyx1029_muted); }
+    .zyx1029_dish .zyx1029_desc { font-size: 14px; margin-top: 10px; color: var(--zyx1029_ink); line-height: 1.7; }
+
+    /* 按钮与状态 */
+    .zyx1029_actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 8px; }
+    .zyx1029_btn { border: none; border-radius: 12px; padding: 12px 20px; font-size: 15px; font-weight: 700; cursor: pointer;
+      background: linear-gradient(135deg, var(--zyx1029_accent), var(--zyx1029_accent2)); color: #fff;
+      box-shadow: 0 8px 20px rgba(99,102,241,.3); }
+    .zyx1029_btn.ghost { background: #fff; color: var(--zyx1029_accent); border: 1px solid var(--zyx1029_accent); box-shadow: none; }
+    .zyx1029_btn:active { transform: scale(.95); }
+    .zyx1029_status { text-align: center; font-size: 13px; margin-top: 14px; color: var(--zyx1029_muted); }
+    .zyx1029_status .ok { color: #16a34a; font-weight: 700; }
+    .zyx1029_status .warn { color: #d97706; font-weight: 700; }
+    .zyx1029_status .bad { color: #dc2626; font-weight: 700; }
+
+    /* 说明卡 */
+    .zyx1029_note { margin-top: 22px; background: #fff; border: 1px solid rgba(99,102,241,.12);
+      border-radius: 14px; padding: 16px; font-size: 13px; color: var(--zyx1029_ink); }
+    .zyx1029_note h2 { font-size: 15px; margin-bottom: 8px; color: var(--zyx1029_accent); }
+    .zyx1029_note p { margin: 6px 0; }
+    .zyx1029_note code { color: #dc2626; background: #fff1f2; padding: 1px 5px; border-radius: 5px; }
+    .zyx1029_note .zyx1029_tip { background: #fffbeb; border-left: 4px solid #d97706; border-radius: 8px; padding: 8px 12px; margin-top: 10px; }
+
+    .zyx1029_footer { text-align: center; margin-top: 24px; font-size: 12.5px; color: var(--zyx1029_muted); }
+    .zyx1029_footer a { color: var(--zyx1029_accent); font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="zyx1029_shell">
+
+    <!-- 返回首页链接（项目规则 3） -->
+    <header class="zyx1029_topbar">
+      <span class="zyx1029_sig">赵雨欣 · 24001011029</span>
+      <a class="zyx1029_home" href="index.html">← 返回首页</a>
+    </header>
+
+    <div class="zyx1029_hero">
+      <h1>摇一摇 · 抽今日菜谱</h1>
+      <p>摇动手机，看看今天吃什么 🍽️</p>
+    </div>
+
+    <div class="zyx1029_phone" id="zyx1029Phone">📱</div>
+
+    <!-- 抽取结果 -->
+    <div class="zyx1029_result" id="zyx1029Result">
+      <span id="zyx1029Placeholder">摇一摇手机，或点击下方按钮抽取</span>
+      <div class="zyx1029_dish" id="zyx1029Dish">
+        <div class="zyx1029_dishmedia">
+          <img class="zyx1029_dishimg" id="zyx1029DishImg" alt="" style="display:none">
+          <div class="zyx1029_emoji" id="zyx1029DishEmoji">🍜</div>
+        </div>
+        <div class="zyx1029_name" id="zyx1029DishName">—</div>
+        <div class="zyx1029_en" id="zyx1029DishEn"></div>
+        <div class="zyx1029_desc" id="zyx1029DishDesc"></div>
+      </div>
+    </div>
+
+    <div class="zyx1029_actions">
+      <button class="zyx1029_btn" id="zyx1029EnableBtn" onclick="zyx1029_enable()">📲 启用摇一摇</button>
+      <button class="zyx1029_btn ghost" id="zyx1029DrawBtn" onclick="zyx1029_draw()">🎲 点我抽一次</button>
+    </div>
+    <p class="zyx1029_status" id="zyx1029Status">正在检测传感器……</p>
+
+    <!-- 验收④：两个属性的区别说明 -->
+    <div class="zyx1029_note">
+      <h2>accelerationIncludingGravity vs acceleration</h2>
+      <p><code>accelerationIncludingGravity</code>：设备测到的<b>总加速度，包含重力</b>。静止平放时约 <code>9.8</code>（重力全压在 Z 轴），因此它既能反映晃动，也能反映<b>朝向/倾斜</b>。</p>
+      <p><code>acceleration</code>：系统<b>扣除了重力</b>后的纯运动加速度。静止时约为 <code>0</code>，只有真正晃动/移动才有数值，更适合判断"摇"这个动作。</p>
+      <p>本页面用 <code>accelerationIncludingGravity</code> 的合成大小 <code>√(x²+y²+z²)</code> 做阈值判断：静止≈9.8，摇动会冲高到 18 以上，从而触发；若该字段缺失则回退用 <code>acceleration</code>。</p>
+      <div class="zyx1029_tip">⚠️ 为什么必须做降级：加速度计只在真机可用，电脑浏览器/无权限设备收不到 <code>devicemotion</code> 数据。若不判断，页面会一片空白或报错。所以这里既显示"当前设备不支持"，又保留"点我抽一次"按钮，保证任何设备都能完成抽取。</div>
+    </div>
+
+    <footer class="zyx1029_footer">
+      赵雨欣 24001011029 · 高级网页设计 · <a href="index.html">回到首页 →</a>
+    </footer>
+  </div>
+
+  <script>
+    /*
+      实现要点（对应验收）：
+      ① 一次摇动只触发一次：触发后进入 1.5s 冷却，期间忽略新的摇动。
+      ② 无传感器不报错不白屏：检测 'devicemotion' 是否可用，不可用则提示并靠按钮降级。
+      ③ iOS 权限：DeviceMotionEvent.requestPermission 需用户手势调用，这里由"启用摇一摇"按钮触发。
+      ④ 区别说明见页面下方说明卡。
+      命名前缀统一 zyx1029_（项目规则 1）。
+    */
+
+    // 今日菜谱候选（随机抽取）；img 为 Wikimedia Commons 实拍图直链，加载失败时回退显示 emoji
+    var zyx1029_fp = 'https://commons.wikimedia.org/wiki/Special:FilePath/';
+    var zyx1029_menu = [
+      { e: '🦆', n: '北京烤鸭', en: 'PEKING DUCK', d: '皮酥肉嫩，蘸酱卷饼，京城讲究一口香。', img: zyx1029_fp + 'Sliced%20Peking%20Duck.jpg?width=600' },
+      { e: '🌶️', n: '麻婆豆腐', en: 'MAPO TOFU', d: '麻辣鲜香烫，嫩豆腐配红油，下饭神器。', img: zyx1029_fp + 'Mapo%20Tofu%20with%20rice.jpg?width=600' },
+      { e: '🥟', n: '水晶虾饺', en: 'HAR GOW', d: '薄皮裹整虾，早茶四大天王之首。', img: zyx1029_fp + '03%20Har%20Gau%20Shrimp%20Dumplings%20-%20East%20Harbor%20Seafood%20Palace.jpg?width=600' },
+      { e: '🥙', n: '肉夹馍', en: 'ROU JIA MO', d: '腊汁肉夹热馍，外酥里软的"中式汉堡"。', img: zyx1029_fp + 'Roujiamo%20and%20Laoling%20Laodoufu.jpg?width=600' },
+      { e: '🍜', n: '兰州拉面', en: 'LAMIAN', d: '一清二白三红四绿五黄，汤宽面劲。', img: zyx1029_fp + 'China%20Lanzhou%20Pulled%20Beef%20Noodle.jpg?width=600' },
+      { e: '🍲', n: '佛跳墙', en: 'FOTIAOQIANG', d: '山海食材一坛煨，闽菜功夫头牌。', img: zyx1029_fp + 'Buddha_soup_boul.jpg?width=600' },
+      { e: '🍢', n: '重庆小面', en: 'CHONGQING NOODLES', d: '麻辣小面，花椒与油辣子的街头灵魂。', img: zyx1029_fp + 'Chongqing%20Xiaomian%20with%20fried%20eggs.jpg?width=600' },
+      { e: '🥘', n: '广东煲仔饭', en: 'CLAY POT RICE', d: '锅巴焦香，腊味与米气在砂锅里交融。', img: zyx1029_fp + 'Malaysian%20Claypot%20Chicken%20Rice%20via%20Rice%20Cooker.jpg?width=600' }
+    ];
+
+    var zyx1029_cooling = false;   // 验收①：冷却标志
+    var zyx1029_listening = false; // 是否已绑定 devicemotion
+    var zyx1029_lastIdx = -1;      // 上次抽到的下标，避免连续重复
+
+    // 功能名称及简介：zyx1029_setStatus —— 更新底部状态提示文字（带颜色类）
+    // 作者：赵雨欣  建立时间：2026-11-16  使用模型：Qwen3.8-Flash
+    function zyx1029_setStatus(html, cls) {
+      var el = document.getElementById('zyx1029Status');
+      el.innerHTML = '<span class="' + (cls || '') + '">' + html + '</span>';
+    }
+
+    // 功能名称及简介：zyx1029_draw —— 随机抽取一道菜并弹出动画；同时触发摇动图标抖动与冷却
+    // 作者：赵雨欣  建立时间：2026-11-16  使用模型：Qwen3.8-Flash
+    function zyx1029_draw() {
+      // 随机且不与上一次相同
+      var i;
+      do { i = Math.floor(Math.random() * zyx1029_menu.length); } while (zyx1029_menu.length > 1 && i === zyx1029_lastIdx);
+      zyx1029_lastIdx = i;
+      var dish = zyx1029_menu[i];
+
+      document.getElementById('zyx1029Placeholder').style.display = 'none';
+      var box = document.getElementById('zyx1029Dish');
+      var emojiEl = document.getElementById('zyx1029DishEmoji');
+      emojiEl.textContent = dish.e;
+      emojiEl.style.display = 'block';           // 先显示 emoji 兜底，图片加载成功后再隐藏
+      // 真实菜品照片：加载成功隐藏 emoji，失败则保留 emoji（不空白）
+      var imgEl = document.getElementById('zyx1029DishImg');
+      imgEl.style.display = 'none';
+      imgEl.onload = function () { imgEl.style.display = 'block'; emojiEl.style.display = 'none'; };
+      imgEl.onerror = function () { imgEl.style.display = 'none'; emojiEl.style.display = 'block'; };
+      imgEl.alt = dish.n;
+      imgEl.src = dish.img;
+      document.getElementById('zyx1029DishName').textContent = dish.n;
+      document.getElementById('zyx1029DishEn').textContent = dish.en;
+      document.getElementById('zyx1029DishDesc').textContent = dish.d;
+      // 重启动画：先移除再下一帧加回
+      box.classList.remove('show');
+      requestAnimationFrame(function () { requestAnimationFrame(function () { box.classList.add('show'); }); });
+
+      // 图标抖动反馈
+      var phone = document.getElementById('zyx1029Phone');
+      phone.classList.remove('zyx1029_shaking');
+      void phone.offsetWidth;
+      phone.classList.add('zyx1029_shaking');
+
+      // 验收①：进入 1.5s 冷却，期间忽略新的摇动
+      zyx1029_cooling = true;
+      setTimeout(function () { zyx1029_cooling = false; }, 1500);
+    }
+
+    // 功能名称及简介：zyx1029_startListen —— 绑定 devicemotion 监听，用合成加速度判定摇动（阈值约18）
+    // 作者：赵雨欣  建立时间：2026-11-16  使用模型：Qwen3.8-Flash
+    function zyx1029_startListen() {
+      if (zyx1029_listening) return;
+      if (!('ontouchstart' in window) && !window.DeviceMotionEvent) {
+        zyx1029_setStatus('当前设备不支持摇一摇，请用「点我抽一次」按钮', 'bad');
+        return;
+      }
+      window.addEventListener('devicemotion', zyx1029_onMotion);
+      zyx1029_listening = true;
+      zyx1029_setStatus('摇一摇已启用，快摇动手机试试 🎉', 'ok');
+    }
+
+    // 功能名称及简介：zyx1029_onMotion —— devicemotion 回调，计算合成加速度并按阈值+冷却触发抽取
+    // 作者：赵雨欣  建立时间：2026-11-16  使用模型：Qwen3.8-Flash
+    function zyx1029_onMotion(e) {
+      if (zyx1029_cooling) return;                 // 验收①：冷却中忽略
+      var a = e.accelerationIncludingGravity || e.acceleration; // 优先含重力合成值，缺失则回退
+      if (!a) return;
+      var mag = Math.sqrt((a.x || 0) ** 2 + (a.y || 0) ** 2 + (a.z || 0) ** 2);
+      // 静止≈9.8；摇动会明显冲高，阈值取 18
+      if (mag > 18) { zyx1029_draw(); }
+    }
+
+    // 功能名称及简介：zyx1029_enable —— 启用传感器；iOS 先经按钮手势申请权限，再开始监听
+    // 作者：赵雨欣  建立时间：2026-11-16  使用模型：Qwen3.8-Flash
+    function zyx1029_enable() {
+      // 验收③：iOS 13+ 必须在用户手势里调用 requestPermission
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        zyx1029_setStatus('正在请求运动权限……', 'warn');
+        DeviceMotionEvent.requestPermission()
+          .then(function (state) {
+            if (state === 'granted') { zyx1029_startListen(); }
+            else { zyx1029_setStatus('未获得权限，请用「点我抽一次」按钮', 'bad'); }
+          })
+          .catch(function () { zyx1029_setStatus('权限申请失败，请用「点我抽一次」按钮', 'bad'); });
+      } else if ('ondevicemotion' in window) {
+        // 安卓/多数浏览器无需额外授权
+        zyx1029_startListen();
+      } else {
+        // 验收②：不支持也不报错，给出降级提示
+        zyx1029_setStatus('当前设备不支持摇一摇，请用「点我抽一次」按钮', 'bad');
+      }
+    }
+
+    // 功能名称及简介：页面加载后检测传感器可用性并更新状态提示
+    // 作者：赵雨欣  建立时间：2026-11-16  使用模型：Qwen3.8-Flash
+    document.addEventListener('DOMContentLoaded', function () {
+      if (!window.DeviceMotionEvent || !('ondevicemotion' in window)) {
+        zyx1029_setStatus('未检测到加速度传感器，请用「点我抽一次」按钮', 'bad');
+      } else if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        // iOS：需用户点击授权后才能监听
+        zyx1029_setStatus('本机需授权：点「启用摇一摇」并允许后即可摇动（iOS 13+ 必需）', 'warn');
+      } else {
+        zyx1029_setStatus('传感器就绪，点「启用摇一摇」开始', 'ok');
+      }
+    });
+  </script>
+</body>
+</html>
