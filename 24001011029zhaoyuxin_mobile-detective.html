@@ -1,0 +1,672 @@
+<!--
+  作者：赵雨欣
+  学号：24001011029
+  建立时间：2026-11-16 16:52:00
+  使用模型：DeepSeek-V4.1-Flash
+  功能名称及简介：任务一 · 事件侦探（观察·记录·不写业务代码）—— 提供一个触摸探针区，
+    依次做 单击 / 向上拖动 / 向左快速滑 / 双指触摸 / 长按后抬起 5 种操作，
+    实时按触发顺序记录 touchstart / touchmove / touchend / touchcancel / click，
+    并自动汇总每次手势的事件序列、touchmove 次数、横纵向位移与耗时；
+    下方用 canvas 绘制手指轨迹草图，页面末尾给出三个必答问题的结论。
+    触屏设备走 touch 事件；桌面无触摸屏时自动改用 pointer 事件（鼠标拖动同样可记录）。
+    命名前缀统一 zyx1029_。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>任务一 · 事件侦探：一次拖动到底发生了什么</title>
+<style>
+  /* 全局重置与基础排版 */
+  *{margin:0;padding:0;box-sizing:border-box}
+  *{-webkit-tap-highlight-color:transparent}
+  body{
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    background:#eef4fb;          /* 冷色底：浅青蓝，区别于参考页的暖橙色 */
+    color:#0f1e35;
+    line-height:1.8;
+    font-size:14px;
+  }
+  .zyx1029_wrap{max-width:1080px;margin:0 auto;padding:22px 16px 50px}
+
+  /* 头部：青蓝渐变，区别于参考页的米橙渐变 */
+  .zyx1029_head{
+    background:linear-gradient(135deg,#0c4a6e,#0e7490);
+    border-radius:14px;padding:20px 22px;margin-bottom:16px;
+    box-shadow:0 10px 26px rgba(14,116,144,.28);
+  }
+  .zyx1029_head h1{font-size:19px;letter-spacing:1px;margin-bottom:6px;color:#fff}
+  .zyx1029_head h1 b{color:#7dd3fc}
+  .zyx1029_head p{font-size:12.5px;color:#cffafe}
+  .zyx1029_head .zyx1029_links{margin-top:10px;font-size:12.5px}
+  .zyx1029_head .zyx1029_links a{color:#7dd3fc;text-decoration:none;margin-right:14px}
+  .zyx1029_head .zyx1029_links a:hover{color:#fff}
+
+  /* 通用卡片：白底 + 青色描边 */
+  .zyx1029_sec{background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:18px 20px;margin-bottom:16px;box-shadow:0 6px 18px rgba(15,30,53,.04)}
+  .zyx1029_sec > h2{font-size:15px;color:#0c4a6e;margin-bottom:10px;padding-left:9px;border-left:3px solid #0891b2}
+  .zyx1029_sec > h2 span{font-size:12px;color:#64748b;font-weight:normal;margin-left:6px}
+  .zyx1029_sec p{font-size:13px;color:#334155;margin-bottom:8px}
+  .zyx1029_sec p b{color:#0c4a6e}
+
+  /* 操作清单 */
+  .zyx1029_ops{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+  .zyx1029_op{border:1px solid #cffafe;border-radius:9px;padding:10px 12px;background:#f0f9ff;font-size:12.5px;color:#334155}
+  .zyx1029_op b{color:#0e7490;display:block;font-size:13px;margin-bottom:2px}
+
+  /* 实时状态 */
+  .zyx1029_state{display:flex;flex-wrap:wrap;gap:10px}
+  .zyx1029_state div{flex:1 1 120px;background:#f0f9ff;border:1px solid #cffafe;border-radius:9px;padding:9px 12px;font-size:12px;color:#64748b}
+  .zyx1029_state div b{display:block;color:#0891b2;font-size:16px;font-family:Consolas,monospace}
+
+  /* 探针区：青色虚线边框，按下时变深青 */
+  .zyx1029_probe{
+    position:relative;height:300px;border:2px dashed #7dd3fc;border-radius:12px;
+    background:linear-gradient(#f0f9ff,#e0f2fe);overflow:hidden;
+    display:flex;align-items:center;justify-content:center;touch-action:none;
+    -webkit-user-select:none;user-select:none;cursor:crosshair;
+  }
+  .zyx1029_probe.zyx1029_active{border-color:#0e7490;background:linear-gradient(#fff,#ccfbf1)}
+  .zyx1029_probe .zyx1029_hint{text-align:center;color:#7dd3fc;font-size:13px;pointer-events:none}
+  .zyx1029_probe .zyx1029_hint b{display:block;font-size:16px;color:#0e7490;margin-bottom:4px}
+  .zyx1029_probe .zyx1029_trace{display:none}   /* 探针区不显示轨迹，统一在第 6 节 canvas 呈现 */
+  .zyx1029_dot{
+    position:absolute;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;
+    background:rgba(8,145,178,.85);box-shadow:0 0 14px rgba(8,145,178,.7);pointer-events:none;
+  }
+
+  /* 表格 */
+  .zyx1029_scroll{max-height:300px;overflow:auto;border:1px solid #dbeafe;border-radius:9px}
+  table.zyx1029_tb{width:100%;border-collapse:collapse;font-size:12px}
+  table.zyx1029_tb th,table.zyx1029_tb td{border-bottom:1px solid #e0f2fe;padding:6px 9px;text-align:left;white-space:nowrap}
+  table.zyx1029_tb th{background:#f0f9ff;color:#0e7490;position:sticky;top:0;font-weight:normal}
+  table.zyx1029_tb td{color:#334155;font-family:Consolas,monospace}
+  .zyx1029_ev_touchstart{color:#15803d!important}
+  .zyx1029_ev_touchmove{color:#1d4ed8!important}
+  .zyx1029_ev_touchend{color:#b45309!important}
+  .zyx1029_ev_touchcancel{color:#b91c1c!important}
+  .zyx1029_ev_click{color:#7c3aed!important}
+
+  .zyx1029_empty{color:#94a3b8;font-size:12px;padding:14px;text-align:center}
+
+  /* 轨迹画布 */
+  .zyx1029_canvas{width:100%;height:220px;background:#f8fafc;border:1px solid #dbeafe;border-radius:9px;display:block}
+
+  /* 问答 */
+  .zyx1029_qa dt{font-size:13.5px;color:#0e7490;font-weight:bold;margin-top:12px}
+  .zyx1029_qa dd{font-size:13px;color:#334155;border-left:3px solid #cffafe;padding-left:12px;margin-top:5px}
+  .zyx1029_qa dd b{color:#0c4a6e}
+  .zyx1029_qa dd code{background:#ecfeff;color:#0e7490;border-radius:4px;padding:1px 6px;font-family:Consolas,monospace;font-size:12px}
+
+  .zyx1029_btn{display:inline-block;border:1px solid #a5f3fc;border-radius:8px;padding:8px 16px;font-size:12.5px;
+    background:#ecfeff;color:#0e7490;cursor:pointer;margin-right:8px;font-family:inherit}
+  .zyx1029_btn:hover{background:#cffafe;color:#155e75}
+  .zyx1029_note{font-size:12px;color:#64748b;margin-top:8px}
+
+  .zyx1029_back{text-align:center;margin-top:22px;font-size:13px}
+  .zyx1029_back a{color:#0e7490;text-decoration:none;margin:0 10px}
+  .zyx1029_back a:hover{color:#0c4a6e}
+
+  @media (max-width:520px){
+    .zyx1029_head h1{font-size:17px}
+    .zyx1029_sec{padding:14px}
+  }
+</style>
+</head>
+<body>
+<div class="zyx1029_wrap">
+
+  <!-- 头部：标题与其它任务入口 -->
+  <div class="zyx1029_head">
+    <h1>任务一 · <b>事件侦探：一次拖动到底发生了什么</b></h1>
+    <p>维度：观察 · 记录 · 不写业务代码。用手机（或 DevTools 设备模式）打开本页，对第 3 节探针区依次做 5 种操作，把事件触发顺序记录下来。</p>
+    <div class="zyx1029_links">
+      <a href="24001011029zhaoyuxin_mobile-gesture.html">任务二 · 手势卡片</a>
+      <a href="24001011029zhaoyuxin_mobile-zoom.html">任务三 · 图片查看器</a>
+      <a href="24001011029zhaoyuxin_mobile-sensor.html">任务四 · 摇一摇</a>
+      <a href="index.html">返回首页</a>
+    </div>
+  </div>
+
+  <!-- 第 1 节：5 种操作清单 -->
+  <div class="zyx1029_sec">
+    <h2>1 · 五种操作清单</h2>
+    <div class="zyx1029_ops">
+      <div class="zyx1029_op"><b>① 单击</b>轻点一下，手指不动，很快抬起</div>
+      <div class="zyx1029_op"><b>② 向上拖动</b>按住后向上移动约 100px</div>
+      <div class="zyx1029_op"><b>③ 向左快速滑</b>短距离快速甩动（fling）</div>
+      <div class="zyx1029_op"><b>④ 双指触摸</b>两指同时按下再抬起</div>
+      <div class="zyx1029_op"><b>⑤ 长按后抬起</b>按住约 600ms 不动再抬</div>
+    </div>
+    <p class="zyx1029_note">触屏设备走 touch 事件；桌面浏览器会自动改用 pointer 事件（鼠标拖动同样能记录手势、绘制轨迹，日志里仍按 touch 系列命名以便对照）。想看真实事件名请开启 DevTools 设备模式（Ctrl+Shift+M）或用手机访问。</p>
+  </div>
+
+  <!-- 第 2 节：实时状态 -->
+  <div class="zyx1029_sec">
+    <h2>2 · 实时状态 <span>当前触点与位移</span></h2>
+    <div class="zyx1029_state">
+      <div>触摸点数<b id="zyx1029PointNum">0</b></div>
+      <div>坐标 X / Y<b id="zyx1029Pos">- / -</b></div>
+      <div>本次 touchmove<b id="zyx1029MoveCount">0</b></div>
+      <div>横向位移 dx<b id="zyx1029Dx">0</b></div>
+      <div>纵向位移 dy<b id="zyx1029Dy">0</b></div>
+    </div>
+  </div>
+
+  <!-- 第 3 节：探针区 -->
+  <div class="zyx1029_sec">
+    <h2>3 · 探针区 <span>在这里做 5 种操作</span></h2>
+    <div class="zyx1029_probe" id="zyx1029Probe">
+      <canvas class="zyx1029_trace" id="zyx1029Trace"></canvas>
+      <div class="zyx1029_hint"><b>把手指放上来</b>探针区不显示轨迹，操作后请看第 6 节 · 轨迹草图</div>
+    </div>
+    <div style="margin-top:12px">
+      <button class="zyx1029_btn" id="zyx1029Clear">清空记录</button>
+      <button class="zyx1029_btn" id="zyx1029Demo">查看判定说明</button>
+    </div>
+  </div>
+
+  <!-- 第 4 节：事件流水 -->
+  <div class="zyx1029_sec">
+    <h2>4 · 事件流水 <span>按真实触发顺序追加</span></h2>
+    <div class="zyx1029_scroll">
+      <table class="zyx1029_tb">
+        <thead>
+          <tr><th>#</th><th>事件</th><th>相对时间(ms)</th><th>touches</th><th>changedTouches</th><th>X</th><th>Y</th></tr>
+        </thead>
+        <tbody id="zyx1029LogBody">
+          <tr><td colspan="7" class="zyx1029_empty">暂无记录，请在探针区操作</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 第 5 节：手势记录表 -->
+  <div class="zyx1029_sec">
+    <h2>5 · 手势记录表 <span>每次手势汇总一行</span></h2>
+    <div class="zyx1029_scroll">
+      <table class="zyx1029_tb">
+        <thead>
+          <tr><th>#</th><th>判定操作</th><th>事件顺序</th><th>touchmove 次数</th><th>dx</th><th>dy</th><th>耗时(ms)</th><th>click</th></tr>
+        </thead>
+        <tbody id="zyx1029GestureBody">
+          <tr><td colspan="8" class="zyx1029_empty">暂无手势记录</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 第 6 节：轨迹草图 canvas -->
+  <div class="zyx1029_sec">
+    <h2>6 · 轨迹草图（加分） <span>轨迹只在这里显示</span></h2>
+    <canvas class="zyx1029_canvas" id="zyx1029Canvas" width="1000" height="440"></canvas>
+    <p class="zyx1029_note">探针区只采集触摸、不显示轨迹；每次手势结束后在这里用不同颜色绘制 touchmove 采样点连线，○ 为起点，× 为终点。</p>
+  </div>
+
+  <!-- 第 7 节：三个必答问题 -->
+  <div class="zyx1029_sec">
+    <h2>7 · 三个必答问题 <span>依据上面的实测数据</span></h2>
+    <dl class="zyx1029_qa">
+      <dt>① 一次拖动里 touchmove 大约触发多少次？和距离有什么关系？</dt>
+      <dd>次数和<b>时长</b>强相关，和距离只是间接相关：浏览器按帧派发 touchmove（约每 16ms 一次，60fps），
+        所以慢拖 1 秒约有 60 次，快速一甩 0.2 秒只有十几次。同样距离下拖得越慢、次数越多；
+        手指移动越快，单次 touchmove 之间的间隔坐标差越大。可以看第 5 节表格里每次手势的"次数 / 耗时"比值验证。</dd>
+
+      <dt>② click 出现在 touchend 之前还是之后？</dt>
+      <dd>在 <b>touchend 之后</b>。顺序是 <code>touchstart → touchmove… → touchend → click</code>。
+        早期移动浏览器 click 会延迟约 300ms（等待判断是否双击缩放），现代浏览器在
+        <code>&lt;meta name="viewport" content="width=device-width"&gt;</code> 且未允许缩放时会立即派发。
+        注意：手指移动距离过大时浏览器可能判定为滑动而<b>不再派发 click</b>。</dd>
+
+      <dt>③ 如果把 touchend 换成 touchcancel，会发生什么？</dt>
+      <dd><code>touchcancel</code> 只在手势被<b>系统或浏览器打断</b>时触发（来电、通知下拉、父级滚动接管、手势被取消），
+        正常抬手只会派发 touchend。若只监听 touchcancel 而不监听 touchend，正常的抬手将收不到结束信号：
+        手势状态卡住、位移不结算、探针区一直处于激活态；而 click 仍可能在之后到达，造成"没有结束却出现 click"。
+        正确做法是两个事件都监听，并在 touchcancel 时做与 touchend 相同的收尾（标记为被打断）。</dd>
+    </dl>
+  </div>
+
+  <div class="zyx1029_back">
+    <a href="24001011029zhaoyuxin_mobile-gesture.html">任务二 手势卡片 →</a>
+    <a href="index.html">返回首页</a>
+  </div>
+</div>
+
+<script>
+  /*
+   * 作者：赵雨欣
+   * 建立时间：2026-11-16 16:52
+   * 使用模型：DeepSeek-V4.1-Flash
+   * 功能名称及简介：任务一事件侦探的探针逻辑 —— 监听 touchstart / touchmove / touchend /
+   *   touchcancel / click，按触发顺序写入事件流水表，并自动汇总每次手势的
+   *   事件序列、touchmove 次数、位移、耗时与操作类型判定，同时在 canvas 上
+   *   绘制手指轨迹。所有变量以 zyx1029_ 开头。
+   */
+
+  /* 探针区元素 */
+  var zyx1029_probeEl = document.getElementById("zyx1029Probe");
+  /* 事件流水表体 */
+  var zyx1029_logBody = document.getElementById("zyx1029LogBody");
+  /* 手势记录表体 */
+  var zyx1029_gestureBody = document.getElementById("zyx1029GestureBody");
+  /* 轨迹画布与其上下文 */
+  var zyx1029_canvas = document.getElementById("zyx1029Canvas");
+  var zyx1029_ctx = zyx1029_canvas.getContext("2d");
+  /* 探针区内的实时轨迹层（当前不绘制，预留） */
+  var zyx1029_trace = document.getElementById("zyx1029Trace");
+  var zyx1029_traceCtx = zyx1029_trace.getContext("2d");
+
+  /* 事件流水数组：每项 { name, t, touches, changed, x, y } */
+  var zyx1029_events = [];
+  /* 手势汇总数组：每项 { label, seq, moveCount, dx, dy, duration, hasClick, path } */
+  var zyx1029_gestures = [];
+  /* 当前进行中的手势对象，抬手后结算并 push 到 zyx1029_gestures */
+  var zyx1029_current = null;
+  /* 页面打开时刻，用于计算相对时间 */
+  var zyx1029_startAt = Date.now();
+  /* 轨迹配色轮换（青蓝系冷色，区别于参考页的暖色） */
+  var zyx1029_colors = ["#0891b2", "#0d9488", "#2563eb", "#7c3aed", "#db2777", "#0f766e"];
+
+  /**
+   * 功能名称及简介：zyx1029_syncTraceSize —— 按探针区当前尺寸同步实时轨迹 canvas 的像素尺寸
+   *   （乘以 devicePixelRatio），并把绘制坐标系整体缩放到 CSS 像素，保证高分屏上线条清晰不模糊。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_syncTraceSize() {
+    var dpr = window.devicePixelRatio || 1;
+    var w = zyx1029_probeEl.clientWidth;
+    var h = zyx1029_probeEl.clientHeight;
+    zyx1029_trace.width = Math.max(1, Math.round(w * dpr));
+    zyx1029_trace.height = Math.max(1, Math.round(h * dpr));
+    zyx1029_traceCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    zyx1029_traceCtx.lineWidth = 2.5;
+    zyx1029_traceCtx.lineCap = "round";
+    zyx1029_traceCtx.lineJoin = "round";
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_relPoint —— 把视口坐标换算成探针区内部坐标，并带上探针当时的宽高。
+   *   轨迹必须存"相对探针"的坐标：页面滚动后探针区的视口位置会变，直接用 clientY 画会导致轨迹跑到画布外。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_relPoint(cx, cy) {
+    var r = zyx1029_probeEl.getBoundingClientRect();
+    return { x: cx - r.left, y: cy - r.top, probeW: r.width, probeH: r.height };
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_now —— 返回相对页面打开时刻的毫秒数，用于事件流水里的相对时间列。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_now() {
+    return Date.now() - zyx1029_startAt;
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_firstTouch —— 从事件对象里取出第一个触点（优先 changedTouches，其次 touches），
+   *   拿不到时返回 null，避免桌面环境无触点时读取 undefined 报错。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_firstTouch(e) {
+    var list = (e.changedTouches && e.changedTouches.length) ? e.changedTouches : e.touches;
+    return (list && list.length) ? list[0] : null;
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_logEvent —— 记录一次原生事件：写入 zyx1029_events 并在事件流水表追加一行
+   *   （含事件名、相对时间、touches / changedTouches 数量、触点坐标）。同时把事件名加入当前手势的序列串。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_logEvent(name, e) {
+    var touch = zyx1029_firstTouch(e);
+    var t = zyx1029_now();
+    var row = {
+      name: name,
+      t: t,
+      touches: e.touches ? e.touches.length : 0,
+      changed: e.changedTouches ? e.changedTouches.length : 0,
+      x: touch ? Math.round(touch.clientX) : "-",
+      y: touch ? Math.round(touch.clientY) : "-"
+    };
+    zyx1029_events.push(row);
+
+    // 手势事件顺序串：touchmove 连续多次折叠成 touchmove×N
+    if (zyx1029_current) {
+      if (name === "touchmove") {
+        zyx1029_current.moveCount++;
+      } else {
+        zyx1029_current.seq.push(name);
+      }
+    }
+
+    if (zyx1029_events.length === 1) {
+      zyx1029_logBody.innerHTML = "";
+    }
+    var tr = document.createElement("tr");
+    tr.innerHTML = '<td>' + zyx1029_events.length + '</td>'
+      + '<td class="zyx1029_ev_' + name + '">' + name + '</td>'
+      + '<td>' + t + '</td>'
+      + '<td>' + row.touches + '</td>'
+      + '<td>' + row.changed + '</td>'
+      + '<td>' + row.x + '</td>'
+      + '<td>' + row.y + '</td>';
+    zyx1029_logBody.appendChild(tr);
+    zyx1029_logBody.parentElement.parentElement.scrollTop = 1e6;
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_updateState —— 刷新第 2 节实时状态面板：触点数量、当前探针内坐标、
+   *   本次 touchmove 次数、相对起点的横向 dx 与纵向 dy。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_updateState(pointNum, x, y) {
+    document.getElementById("zyx1029PointNum").textContent = pointNum;
+    if (zyx1029_current && typeof x === "number") {
+      document.getElementById("zyx1029Pos").textContent = Math.round(x) + " / " + Math.round(y);
+      document.getElementById("zyx1029MoveCount").textContent = zyx1029_current.moveCount;
+      document.getElementById("zyx1029Dx").textContent = Math.round(x - zyx1029_current.startX);
+      document.getElementById("zyx1029Dy").textContent = Math.round(y - zyx1029_current.startY);
+    }
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_labelGesture —— 依据起点到终点的位移、耗时与触点数，把一次手势判定为
+   *   双指触摸 / 向左快速滑 / 向上拖动 / 长按后抬起 / 单击 / 其他拖动。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_labelGesture(g) {
+    var dx = g.dx, dy = g.dy;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    var speed = g.duration > 0 ? dist / g.duration : 0;
+
+    if (g.maxTouches >= 2) return "④ 双指触摸";
+    if (dist > 30 && Math.abs(dx) >= Math.abs(dy)) {
+      return dx < 0
+        ? (speed > 0.5 ? "③ 向左快速滑" : "向左拖动")
+        : (speed > 0.5 ? "向右快速滑" : "向右拖动");
+    }
+    if (dist > 30 && dy < 0) return "② 向上拖动";
+    if (dist > 30) return "向下拖动";
+    if (g.duration >= 400) return "⑤ 长按后抬起";
+    return "① 单击";
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_finishGesture —— 手势结束时结算：算位移、耗时、判定类型，写入手势记录表并绘制轨迹。
+   *   由 touchend / touchcancel 调用；带 cancelled 标记区分是被打断还是正常抬手。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_finishGesture(cancelled) {
+    if (!zyx1029_current) return;
+    var g = zyx1029_current;
+    zyx1029_current = null;
+
+    g.dx = g.endX - g.startX;
+    g.dy = g.endY - g.startY;
+    g.duration = g.endAt - g.startAt;
+    g.label = zyx1029_labelGesture(g) + (cancelled ? "（被 touchcancel 打断）" : "");
+    zyx1029_gestures.push(g);
+
+    if (zyx1029_gestures.length === 1) {
+      zyx1029_gestureBody.innerHTML = "";
+    }
+    var seq = g.seq.join(" → ") + (g.moveCount ? " → touchmove×" + g.moveCount : "");
+    var tr = document.createElement("tr");
+    tr.innerHTML = '<td>' + zyx1029_gestures.length + '</td>'
+      + '<td>' + g.label + '</td>'
+      + '<td>' + seq + '</td>'
+      + '<td>' + g.moveCount + '</td>'
+      + '<td>' + Math.round(g.dx) + '</td>'
+      + '<td>' + Math.round(g.dy) + '</td>'
+      + '<td>' + g.duration + '</td>'
+      + '<td>' + (g.hasClick ? "有（在 touchend 之后）" : "无") + '</td>';
+    zyx1029_gestureBody.appendChild(tr);
+
+    zyx1029_drawPath(g);
+    zyx1029_probeEl.classList.remove("zyx1029_active");
+    var dot = zyx1029_probeEl.querySelector(".zyx1029_dot");
+    if (dot) dot.remove();
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_drawPath —— 在 canvas 上绘制一次手势的轨迹：touchmove 采样点连成折线，
+   *   ○ 标起点、× 标终点，每次手势换一种颜色。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_drawPath(g) {
+    var s = Math.min(zyx1029_canvas.width / (g.probeW || 1), zyx1029_canvas.height / (g.probeH || 1));
+    var offX = (zyx1029_canvas.width - (g.probeW || 0) * s) / 2;
+    var offY = (zyx1029_canvas.height - (g.probeH || 0) * s) / 2;
+    var color = g.color || zyx1029_colors[0];
+
+    zyx1029_ctx.strokeStyle = color;
+    zyx1029_ctx.lineWidth = 2 * s;
+    zyx1029_ctx.lineCap = "round";
+    zyx1029_ctx.lineJoin = "round";
+    zyx1029_ctx.beginPath();
+    for (var i = 0; i < g.path.length; i++) {
+      var p = g.path[i];
+      var x = offX + p.x * s;
+      var y = offY + p.y * s;
+      if (i === 0) zyx1029_ctx.moveTo(x, y);
+      else zyx1029_ctx.lineTo(x, y);
+    }
+    zyx1029_ctx.stroke();
+
+    // 起点 ○
+    if (g.path.length) {
+      var s0 = g.path[0];
+      zyx1029_ctx.beginPath();
+      zyx1029_ctx.arc(offX + s0.x * s, offY + s0.y * s, 6 * s, 0, Math.PI * 2);
+      zyx1029_ctx.stroke();
+
+      // 终点 ×
+      var l = g.path[g.path.length - 1];
+      var lx = offX + l.x * s;
+      var ly = offY + l.y * s;
+      zyx1029_ctx.beginPath();
+      zyx1029_ctx.moveTo(lx - 6 * s, ly - 6 * s);
+      zyx1029_ctx.lineTo(lx + 6 * s, ly + 6 * s);
+      zyx1029_ctx.moveTo(lx + 6 * s, ly - 6 * s);
+      zyx1029_ctx.lineTo(lx - 6 * s, ly + 6 * s);
+      zyx1029_ctx.stroke();
+    }
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_onTouchStart —— 手指按下：创建当前手势对象（记录起点坐标、时间、触点数、路径），
+   *   给探针区加高亮，并准备一个跟随手指的光点。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_onTouchStart(e) {
+    var t = zyx1029_firstTouch(e);
+    if (!t) return;
+    var p = zyx1029_relPoint(t.clientX, t.clientY);
+    zyx1029_syncTraceSize();
+    zyx1029_current = {
+      startX: p.x, startY: p.y, endX: p.x, endY: p.y,
+      startAt: Date.now(), endAt: Date.now(),
+      moveCount: 0, maxTouches: e.touches.length,
+      seq: ["touchstart"], hasClick: false,
+      color: zyx1029_colors[zyx1029_gestures.length % zyx1029_colors.length],
+      probeW: p.probeW, probeH: p.probeH,
+      path: [{ x: p.x, y: p.y }]
+    };
+    zyx1029_probeEl.classList.add("zyx1029_active");
+    zyx1029_logEvent("touchstart", e);
+    zyx1029_updateState(e.touches.length, p.x, p.y);
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_onTouchMove —— 手指移动：更新终点坐标与路径采样点，刷新实时位移；
+   *   光点跟随手指位置。这里不阻止默认行为，是为了观察页面是否跟着滚动。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_onTouchMove(e) {
+    var t = zyx1029_firstTouch(e);
+    if (!t) return;
+    var p = zyx1029_relPoint(t.clientX, t.clientY);
+    if (zyx1029_current) {
+      zyx1029_current.endX = p.x;
+      zyx1029_current.endY = p.y;
+      zyx1029_current.endAt = Date.now();
+      if (e.touches.length > zyx1029_current.maxTouches) {
+        zyx1029_current.maxTouches = e.touches.length;
+      }
+      zyx1029_current.path.push({ x: p.x, y: p.y });
+      // 探针区不显示实时轨迹，轨迹只在第 6 节 canvas 上绘制
+    }
+    zyx1029_logEvent("touchmove", e);
+
+    // 光点跟随
+    var dot = zyx1029_probeEl.querySelector(".zyx1029_dot");
+    if (!dot) {
+      dot = document.createElement("div");
+      dot.className = "zyx1029_dot";
+      zyx1029_probeEl.appendChild(dot);
+    }
+    dot.style.left = p.x + "px";
+    dot.style.top = p.y + "px";
+
+    zyx1029_updateState(e.touches.length, p.x, p.y);
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_onTouchEnd —— 正常抬手：记录事件后结算当前手势。click 通常在此之后到达，
+   *   由 zyx1029_onClick 把 hasClick 补到最近一条手势记录上。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_onTouchEnd(e) {
+    var t = zyx1029_firstTouch(e);
+    if (t && zyx1029_current) {
+      var p = zyx1029_relPoint(t.clientX, t.clientY);
+      zyx1029_current.endX = p.x;
+      zyx1029_current.endY = p.y;
+      zyx1029_current.endAt = Date.now();
+    }
+    zyx1029_logEvent("touchend", e);
+    zyx1029_finishGesture(false);
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_onTouchCancel —— 手势被打断：记录 touchcancel 后同样结算，
+   *   并在记录里注明"被 touchcancel 打断"，与 touchend 的处理保持一致，避免状态卡住。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_onTouchCancel(e) {
+    zyx1029_logEvent("touchcancel", e);
+    zyx1029_finishGesture(true);
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_onClick —— 点击：记录 click 事件，并把它标记到最近一次手势记录上，
+   *   用来验证"click 出现在 touchend 之后"。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_onClick(e) {
+    zyx1029_logEvent("click", e);
+    var last = zyx1029_gestures[zyx1029_gestures.length - 1];
+    if (last && !last.hasClick) {
+      last.hasClick = true;
+      var rows = zyx1029_gestureBody.querySelectorAll("tr");
+      var row = rows[rows.length - 1];
+      if (row && row.cells.length >= 8) {
+        row.cells[7].textContent = "有（在 touchend 之后）";
+      }
+    }
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_clearAll —— 清空事件流水、手势记录、轨迹画布与实时状态，回到初始界面。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_clearAll() {
+    zyx1029_events = [];
+    zyx1029_gestures = [];
+    zyx1029_current = null;
+    zyx1029_logBody.innerHTML = '<tr><td colspan="7" class="zyx1029_empty">暂无记录，请在探针区操作</td></tr>';
+    zyx1029_gestureBody.innerHTML = '<tr><td colspan="8" class="zyx1029_empty">暂无手势记录</td></tr>';
+    zyx1029_ctx.clearRect(0, 0, zyx1029_canvas.width, zyx1029_canvas.height);
+    zyx1029_traceCtx.clearRect(0, 0, zyx1029_trace.clientWidth, zyx1029_trace.clientHeight);
+    document.getElementById("zyx1029PointNum").textContent = "0";
+    document.getElementById("zyx1029Pos").textContent = "- / -";
+    document.getElementById("zyx1029MoveCount").textContent = "0";
+    document.getElementById("zyx1029Dx").textContent = "0";
+    document.getElementById("zyx1029Dy").textContent = "0";
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_onPointerDown —— 桌面鼠标兜底（没有触摸屏时使用）：把 pointerdown 当作按下，
+   *   用一个只有一个触点的"伪事件对象"复用触摸逻辑，从而在电脑上也能记录事件与绘制轨迹。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_onPointerDown(e) {
+    zyx1029_probeEl.setPointerCapture(e.pointerId);
+    zyx1029_onTouchStart({
+      touches: [{ clientX: e.clientX, clientY: e.clientY }],
+      changedTouches: [{ clientX: e.clientX, clientY: e.clientY }]
+    });
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_onPointerMove —— 桌面鼠标拖动：仅在按下状态（buttons 含左键）时转发为移动事件，
+   *   复用触摸的路径采样与实时绘制。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_onPointerMove(e) {
+    if (!zyx1029_current) return;
+    zyx1029_onTouchMove({
+      touches: [{ clientX: e.clientX, clientY: e.clientY }],
+      changedTouches: [{ clientX: e.clientX, clientY: e.clientY }]
+    });
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_onPointerUp —— 桌面鼠标抬起：转发为 touchend 完成结算；
+   *   指针离开/取消时按 touchcancel 处理。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_onPointerUp(e) {
+    if (!zyx1029_current) return;
+    zyx1029_onTouchEnd({
+      touches: [],
+      changedTouches: [{ clientX: e.clientX, clientY: e.clientY }]
+    });
+  }
+
+  /**
+   * 功能名称及简介：zyx1029_bindEvents —— 绑定事件。触屏设备走 touchstart / touchmove / touchend /
+   *   touchcancel / click；没有触摸能力的桌面环境改走 pointerdown / pointermove / pointerup，
+   *   保证在电脑上也能记录手势并看到轨迹草图。窗口尺寸变化时同步轨迹画布。
+   * 作者：赵雨欣  建立时间：2026-11-16  使用模型：DeepSeek-V4.1-Flash
+   */
+  function zyx1029_bindEvents() {
+    var hasTouch = ("ontouchstart" in window) || navigator.maxTouchPoints > 0;
+
+    if (hasTouch) {
+      zyx1029_probeEl.addEventListener("touchstart", zyx1029_onTouchStart, { passive: true });
+      zyx1029_probeEl.addEventListener("touchmove", zyx1029_onTouchMove, { passive: false });
+      zyx1029_probeEl.addEventListener("touchend", zyx1029_onTouchEnd, { passive: true });
+      zyx1029_probeEl.addEventListener("touchcancel", zyx1029_onTouchCancel, { passive: true });
+    } else {
+      zyx1029_probeEl.addEventListener("pointerdown", zyx1029_onPointerDown);
+      zyx1029_probeEl.addEventListener("pointermove", zyx1029_onPointerMove);
+      zyx1029_probeEl.addEventListener("pointerup", zyx1029_onPointerUp);
+      zyx1029_probeEl.addEventListener("pointercancel", zyx1029_onPointerUp);
+    }
+
+    zyx1029_probeEl.addEventListener("click", zyx1029_onClick);
+    document.getElementById("zyx1029Clear").addEventListener("click", zyx1029_clearAll);
+    document.getElementById("zyx1029Demo").addEventListener("click", function () {
+      alert("判定规则：\n双指 → ④ 双指触摸；水平位移为主且速度>0.5px/ms → ③ 快速滑；\n纵向位移>30px 且向上 → ② 向上拖动；位移<30px 且耗时≥400ms → ⑤ 长按；\n其余小位移 → ① 单击。");
+    });
+
+    window.addEventListener("resize", zyx1029_syncTraceSize);
+    zyx1029_syncTraceSize();
+  }
+
+  zyx1029_bindEvents();
+</script>
+</body>
+</html>
